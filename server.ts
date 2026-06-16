@@ -74,18 +74,43 @@ function isQuotaError(err: any): boolean {
     msg.includes("quota") || 
     msg.includes("exhausted") || 
     msg.includes("429") || 
+    msg.includes("503") ||
+    msg.includes("unavailable") ||
+    msg.includes("high demand") ||
+    msg.includes("temporary") ||
+    msg.includes("service busy") ||
     msg.includes("rate_limit") ||
     msg.includes("resource_exhausted")
   );
 }
 
+const app = express();
+app.use(express.json({ limit: "10mb" }));
+
 async function startServer() {
-  const app = express();
   const PORT = 3000;
 
-  app.use(express.json({ limit: "10mb" }));
+  // Serve static application bundle or Vite dev server
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(process.cwd(), "dist");
+    app.use(express.static(distPath));
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
+    });
+  }
 
-  // API Route: Security Code & Vulnerability audit endpoint
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`HackerAI server environment initialized and listening at http://localhost:${PORT}`);
+  });
+}
+
+// API Route: Security Code & Vulnerability audit endpoint
   app.post("/api/audit", async (req, res) => {
     let clientLanguage = "en";
     try {
@@ -239,29 +264,29 @@ ${code}
         res.json({
           score: 80,
           summary: isPt 
-            ? "⚠️ [Aviso de Limite de Cota do Gemini] O limite da cota gratuita diária da plataforma foi atingido. Para continuar usando a inteligência ativa sem interrupções, por favor configure sua própria chave de API em 'Settings' (Configurações) > 'Secrets' com o nome GEMINI_API_KEY no painel do Google AI Studio."
-            : "⚠️ [Gemini Quota Limit Notice] The shared free-tier api quota has been fully exhausted. To bypass this and continue analyzing, define your own personalized GEMINI_API_KEY in Settings > Secrets.",
+            ? "⚠️ [Aviso de Instabilidade, Alta Demanda ou Limite de Cota do Gemini] O limite da cota gratuita diária da plataforma foi atingido, ou o modelo Gemini está temporariamente indisponível devido a uma sobrecarga momentânea de tráfego. Para continuar usando a inteligência ativa sem interrupções, por favor configure sua própria chave de API em 'Settings' (Configurações) > 'Secrets' com o nome GEMINI_API_KEY no painel do Google AI Studio."
+            : "⚠️ [Gemini Service Busy / Quota Notice] The shared free-tier daily API quota has been exhausted, or the Google Gemini model is temporarily experiencing extremely high demand (503/UNAVAILABLE). To ensure 100% uninterrupted dynamic scans, register and configure your own GEMINI_API_KEY inside the project's 'Settings > Secrets' menu.",
           vulnerabilities: [
             {
               "id": "quota-1",
-              "title": isPt ? "Cota de API Esmagada (Resource Exhausted)" : "API Quota Limits Reached",
+              "title": isPt ? "Cota de API Alcançada ou Serviço Ocupado" : "API Limit or Service Busy",
               "severity": "medium",
               "cwe": "CWE-400",
               "description": isPt 
-                ? "O limite de requisições por minuto ou diário do modelo Gemini na cota pública foi alcançado." 
-                : "The shared Google AI Studio daily API allotment for the free model tier has run out.",
+                ? "O limite de requisições públicas do modelo Gemini foi atingido ou os servidores estão com demanda extrema temporária." 
+                : "The shared Google daily API allotment is depleted, or the model is currently undergoing high temporary congestion.",
               "impact": isPt ? "Incapaz de gerar análises inéditas dinâmicas de IA neste momento." : "Unable to generate live dynamic audits temporarily.",
               "lineStart": 1,
               "lineEnd": 10,
               "remediation": isPt 
-                ? "Vá até o topo esquerdo/painel, clique no menu de configurações/segredos (Settings > Secrets) e insira sua chave 'GEMINI_API_KEY' pessoal." 
-                : "Obtain a free or paid API key at ai.google.dev and save it under GEMINI_API_KEY inside project Secrets.",
+                ? "Vá até o topo esquerdo/painel, clique no menu de configurações/segredos (Settings > Secrets) e insira sua chave 'GEMINI_API_KEY' pessoal, ou tente enviar novamente o código em alguns segundos." 
+                : "Obtain a free or paid API key at ai.google.dev, save it under GEMINI_API_KEY inside project Secrets, or attempt to re-submit your script in a few seconds.",
               "fixedCode": isPt ? "// Insira sua própria GEMINI_API_KEY nos Secrets" : "// Supply your own GEMINI_API_KEY in Secrets list"
             }
           ],
           generalRemediations: isPt 
-            ? ["Adicione uma GEMINI_API_KEY própria nas configurações do projeto para restabelecer auditoria dinâmica.", "Aproveite para revisar manualmente as diretrizes de código seguro da OWASP enquanto a cota reajusta."]
-            : ["Include your personal GEMINI_API_KEY in the Secrets menu to restore live analyzer access.", "Utilize standard manual code review guidelines while waiting for key setup."]
+            ? ["Adicione uma GEMINI_API_KEY própria nas configurações do projeto para restabelecer auditoria dinâmica.", "Tente reenviar em alguns segundos se o erro for devido a alta demanda temporária."]
+            : ["Include your personal GEMINI_API_KEY in the Secrets menu to restore live analyzer access.", "Try resubmitting the review request in a few seconds if this is a transient overload."]
         });
         return;
       }
@@ -452,8 +477,8 @@ Your answer MUST be a valid JSON with format:
         const isPt = clientLanguage === "pt";
         res.json({
           text: isPt 
-            ? "⚠️ [Cota Excedida] Olá! Infelizmente a cota gratuita do modelo Gemini compartilhada pela plataforma foi esgotada hoje. Para restaurar o suporte de chat dinâmico em tempo real instantaneamente, vá até o menu 'Settings/Secrets' (Configurações > Segredos) e adicione a sua própria variável GEMINI_API_KEY com uma chave de desenvolvedor válida do Google AI Studio."
-            : "⚠️ [Quota Exhausted] Hello! Unfortunately, the shared free-tier daily usage allocation for the Gemini model has been fully exhausted today. To instantly reactivate full dynamic chatbot assistance, please register and add your custom GEMINI_API_KEY inside the 'Settings > Secrets' panel.",
+            ? "⚠️ [Cota Excedida ou Alta Demanda do Gemini] Olá! Infelizmente a cota gratuita compartilhada pela plataforma foi esgotada hoje ou o modelo Gemini está enfrentando alta demanda temporária (Erro 503/UNAVAILABLE). Para restaurar o suporte de chat dinâmico em tempo real instantaneamente, por favor adicione a sua própria chave GEMINI_API_KEY no menu 'Settings > Secrets' (Configurações > Segredos), ou aguarde alguns segundos e tente novamente!"
+            : "⚠️ [Gemini Busy or Quota Exhausted] Hello! Unfortunately, the shared free-tier daily usage allocation for the Gemini model has been exceeded, or Google is experiencing too much concurrent traffic right now (503/UNAVAILABLE). To instantly reactivate full dynamic chatbot assistance, please add your custom GEMINI_API_KEY inside 'Settings > Secrets', or retry in a few seconds!",
           personality: "null_entropy",
           punishment: false
         });
@@ -494,31 +519,15 @@ Your answer MUST be a valid JSON with format:
     } catch (e: any) {
       console.error("[HackerAI] Transcribe error:", e);
       if (isQuotaError(e)) {
-        res.json({ text: "[Erro de Cota Excedida / API Quota Exhausted] Adicione sua GEMINI_API_KEY pessoal no menu Secrets para falar por voz." });
+        res.json({ text: "[API Indisponível / Quota Exhausted] Adicione sua GEMINI_API_KEY pessoal no menu 'Settings > Secrets' ou aguarde alguns segundos para falar por voz." });
         return;
       }
       res.status(500).json({ error: e.message || "Failed to transcribe audio data" });
     }
   });
 
-  // Serve static application bundle or Vite dev server
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
+  if (process.env.VERCEL !== "1") {
+    startServer();
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`HackerAI server environment initialized and listening at http://localhost:${PORT}`);
-  });
-}
-
-startServer();
+  export { app };

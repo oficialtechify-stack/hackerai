@@ -420,6 +420,7 @@ export default function App() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recognitionRef = useRef<any>(null);
+  const sttRecognitionRef = useRef<any>(null);
 
   // Initialize Speech recognition for "Conversa Contínua (Escuta Ativa)"
   const startSpeechRecognition = () => {
@@ -637,7 +638,7 @@ export default function App() {
   // ==========================================
   // SINGLE PRESS RECORD & TRANSCRIBE (STT) LINE
   // ==========================================
-  const startRecordingSingleSTT = async () => {
+  const runMediaRecorderSTTFallback = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioChunksRef.current = [];
@@ -658,7 +659,6 @@ export default function App() {
         reader.readAsDataURL(audioBlob);
         reader.onloadend = async () => {
           const base64data = reader.result as string;
-          // Extract plain base64 without prefix data
           const base64Raw = base64data.split(",")[1];
 
           try {
@@ -678,7 +678,7 @@ export default function App() {
               });
             }
           } catch (err) {
-            console.error("Transcribe API dispatch error:", err);
+            console.error("Transcribe API fallback dispatch error:", err);
           } finally {
             setSttStatus(null);
             setIsRecordingSTT(false);
@@ -691,15 +691,94 @@ export default function App() {
       setIsRecordingSTT(true);
       setSttStatus(t[lang].sttStart);
     } catch (err: any) {
-      console.warn("Input mic access refused:", err);
-      // Clean fallback: alert user elegantly
+      console.warn("Input mic fallback access refused:", err);
       setIsRecordingSTT(false);
       setSttStatus(null);
       alert(lang === "pt" ? "Acesso ao microfone foi recusado ou não é suportado no ambiente seguro corrente." : "Microphone access was refused or not supported in this frame context.");
     }
   };
 
+  const startRecordingSingleSTT = async () => {
+    if (typeof window === "undefined") return;
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    
+    if (!SpeechRecognition) {
+      console.log("No native SpeechRecognition found. Launching MediaRecorder fallback.");
+      runMediaRecorderSTTFallback();
+      return;
+    }
+
+    try {
+      if (sttRecognitionRef.current) {
+        try {
+          sttRecognitionRef.current.abort();
+        } catch (e) {}
+      }
+
+      const rec = new SpeechRecognition();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = lang === "pt" ? "pt-BR" : "en-US";
+
+      const initialVal = chatInput.trim() ? chatInput.trim() + " " : "";
+
+      rec.onstart = () => {
+        setIsRecordingSTT(true);
+        setSttStatus(lang === "pt" ? "Escutando..." : "Listening...");
+      };
+
+      rec.onresult = (event: any) => {
+        let interimTranscript = "";
+        let finalTranscript = "";
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const transcript = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalTranscript += transcript;
+          } else {
+            interimTranscript += transcript;
+          }
+        }
+
+        const spokenText = finalTranscript || interimTranscript;
+        if (spokenText) {
+          setChatInput(initialVal + spokenText);
+        }
+      };
+
+      rec.onerror = (event: any) => {
+        console.error("STT Speech Recognition error:", event.error);
+        if (event.error === "aborted") return; // ignore intentional speech stops
+
+        if (event.error === "not-allowed") {
+          alert(lang === "pt" ? "Permissão de microfone negada ou bloqueada no preview." : "Microphone permission denied or blocked in the preview frame.");
+        }
+      };
+
+      rec.onend = () => {
+        setIsRecordingSTT(false);
+        setSttStatus(null);
+      };
+
+      sttRecognitionRef.current = rec;
+      rec.start();
+    } catch (err: any) {
+      console.warn("SpeechRecognition init failed, launching MediaRecorder fallback:", err);
+      runMediaRecorderSTTFallback();
+    }
+  };
+
   const stopRecordingSingleSTT = () => {
+    let stoppedByNative = false;
+    if (sttRecognitionRef.current) {
+      try {
+        sttRecognitionRef.current.stop();
+        stoppedByNative = true;
+      } catch (e) {
+        console.error("Stop native STT recognition failed:", e);
+      }
+    }
+    
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       try {
         mediaRecorderRef.current.stop();
@@ -707,6 +786,12 @@ export default function App() {
       } catch (e) {
         console.error("Stop single media stream tracks failed:", e);
       }
+    }
+
+    if (stoppedByNative) {
+      // Immediately finalize tracking states
+      setIsRecordingSTT(false);
+      setSttStatus(null);
     }
   };
 
